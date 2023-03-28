@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09 # indicate the current version
+Description: "VPC,Internet + NAT Gateways" # description "for myself
+
+Metadata:
+ AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Network Configuration"
+        Parameters: 
+          - Environment
+          - VPCBlock
+      -
+        Label:
+          default: "Subnets CIDR Block"
+        Parameters:
+          - PublicSubnetCIDR
+
+Parameters:
+  Environment:
+    Type: String
+    Default: "Learning_network_Primak"
+
+  VPCBlock:
+    Type: String
+    Default: '10.0.0.0/16'
+
+  PublicSubnetCIDR: 
+    Type: String
+    Default: '10.0.10.0/24'
+    Description: "Public Subnet CIDR"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:                              # connect Primary CIDR Block
+      CidrBlock: !Ref VPCBlock             
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref Environment
+
+  GatewayInternet:
+    Type: "AWS::EC2::InternetGateway"
+    Properties: 
+      Tags:
+        - Key: Name
+          Value: !Ref Environment
+
+  GatewayAttachmentInternet:                       # connect IGW to VPC
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId:  !Ref VPC
+      InternetGatewayId: !Ref GatewayInternet
+
+  RouteTableForPublicSubnet:                       # Creation of Empty Route Table
+    Type: "AWS::EC2::RouteTable"                    
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join [ " ", [ !Ref Environment, "PublicRouteTable" ] ]
+
+  RoutesForPublicRouteTable:                     # Creation and connect of Routes for Route Table
+    Type: "AWS::EC2::Route"
+    DependsOn: GatewayAttachmentInternet
+    Properties: 
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref GatewayInternet
+      RouteTableId: !Ref RouteTableForPublicSubnet
+
+  RouteAssociationPublic:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref RouteTableForPublicSubnet
+      SubnetId: !Ref PublicSubnet
+
+  EIP1:
+    Type: "AWS::EC2::EIP"
+    DependsOn : GatewayAttachmentInternet
+    Properties:
+      Domain: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: EIP-NATGateway   
+
+  NATGateway:
+    DependsOn: GatewayAttachmentInternet
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      AllocationId:  !GetAtt EIP1.AllocationId
+      Tags:
+        - Key: Name
+          Value: NATGateway
+
+  PublicSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, "Fn::GetAZs": { Ref: "AWS::Region" } ]
+      CidrBlock: !Ref "PublicSubnetCIDR"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ "", [ !Ref Environment, "-Public" ] ]
+        - Key: kubernetes.io/role/elb
+          Value: 1    
+
+Outputs:
+  VPC:
+    Description: ID for the VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Join [ "-", [ !Ref "Environment", "VPC" ] ]
+
+  VPCBlock:
+    Description: Primary CIDR block for the VPC
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Join [ "-", [ !Ref "Environment", "CIDR" ] ]
+
+  Public:
+    Description: ID for Public Subnet 
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Join [ "-", [ !Ref "Environment", "PublicSubnet" ] ]
